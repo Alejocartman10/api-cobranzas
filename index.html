@@ -1,0 +1,514 @@
+import { useState, useEffect } from "react";
+
+// ─── DATOS REALES (desde Excel prueba.xlsx) ───────────────────────────────────
+const CLIENTES_MOCK = [
+  { id: "001", nombre: "Benjamin Caro Molina",              cedula: "298238",   telefono: "3138111212", saldo: 1994987,  diasMora: 60, etapa: "Prejurídica" },
+  { id: "002", nombre: "Luis Enrique Molina Molina",        cedula: "3730786",  telefono: "3004832080", saldo: 2297865,  diasMora: 30, etapa: "Corriente"   },
+  { id: "003", nombre: "Jorge Eliecer Molina Molina",       cedula: "3731062",  telefono: "3008233052", saldo: 3122035,  diasMora: 90, etapa: "Jurídica"    },
+  { id: "004", nombre: "Carlos Alberto Morales Gonzalez",   cedula: "3745755",  telefono: "3013664504", saldo: 7104328,  diasMora: 30, etapa: "Corriente"   },
+  { id: "005", nombre: "Omar Alfonso Rivera Torres",        cedula: "4043455",  telefono: "3125157617", saldo: 4317845,  diasMora: 30, etapa: "Corriente"   },
+  { id: "006", nombre: "Luis Fernando Huertas Huertas",     cedula: "4179880",  telefono: "3204915096", saldo: 4254507,  diasMora: 60, etapa: "Prejurídica" },
+  { id: "007", nombre: "Luis Alberto Cifuentes Monroy",     cedula: "4279856",  telefono: "3188507976", saldo: 602886,   diasMora: 90, etapa: "Jurídica"    },
+  { id: "008", nombre: "Johny Alexander Ramirez Parra",     cedula: "4583532",  telefono: "3122855680", saldo: 639155,   diasMora: 60, etapa: "Prejurídica" },
+  { id: "009", nombre: "Juan Manuel Gonzalez Pedroso",      cedula: "5470110",  telefono: "3106976566", saldo: 12027697, diasMora: 60, etapa: "Prejurídica" },
+  { id: "010", nombre: "Jesus Islen Cifuentes Chamorro",    cedula: "6322489",  telefono: "3117303748", saldo: 21521435, diasMora: 90, etapa: "Jurídica"    },
+  { id: "011", nombre: "Alejandro Franco",                  cedula: "89008409", telefono: "3043691414", saldo: 150000,   diasMora: 15, etapa: "Corriente"   },
+  { id: "012", nombre: "Iván Piedrahita",                   cedula: "14775678", telefono: "3503976058", saldo: 250000,   diasMora: 20, etapa: "Corriente"   },
+];
+
+const ETAPAS = ["Corriente", "Prejurídica", "Jurídica", "Demanda"];
+
+const ETAPA_CONFIG = {
+  Corriente:   { color: "#22c55e", bg: "#052e16", badge: "#16a34a", dias: "1–30 días" },
+  Prejurídica: { color: "#f59e0b", bg: "#2d1b00", badge: "#d97706", dias: "31–60 días" },
+  Jurídica:    { color: "#f97316", bg: "#2d1000", badge: "#ea580c", dias: "61–90 días" },
+  Demanda:     { color: "#ef4444", bg: "#2d0000", badge: "#dc2626", dias: "90+ días" },
+};
+
+const MEDIOS_PAGO = [
+  { id: "bancolombia", label: "Bancolombia Ahorros", detalle: "Cta. 693-000234-56 · Cobro de Cartera S.A.S" },
+  { id: "pse",         label: "PSE",                 detalle: "Pago en línea vía PSE · NIT 900.123.456-7" },
+  { id: "link",        label: "Link de Pago",        detalle: "https://pagos.cobranza.co/pagar" },
+];
+
+// ─── MOTOR DE CUMPLIMIENTO LEY 2300 ──────────────────────────────────────────
+const FESTIVOS_COLOMBIA_2025_2026 = [
+  "2025-01-01","2025-01-06","2025-03-24","2025-04-17","2025-04-18","2025-05-01",
+  "2025-06-02","2025-06-23","2025-06-30","2025-07-20","2025-08-07","2025-08-18",
+  "2025-10-13","2025-11-03","2025-11-17","2025-12-08","2025-12-25",
+  "2026-01-01","2026-01-12","2026-03-23","2026-04-02","2026-04-03","2026-05-01",
+  "2026-05-18","2026-06-08","2026-06-15","2026-07-20","2026-08-07","2026-08-17",
+  "2026-10-12","2026-11-02","2026-11-16","2026-12-08","2026-12-25",
+];
+
+function verificarCumplimiento(clienteId, gestiones) {
+  const ahora = new Date();
+  const hora = ahora.getHours() + ahora.getMinutes() / 60;
+  const diaSemana = ahora.getDay();
+  const fechaHoy = ahora.toISOString().split("T")[0];
+
+  if (FESTIVOS_COLOMBIA_2025_2026.includes(fechaHoy))
+    return { permitido: false, motivo: "Hoy es festivo. La Ley 2300 prohíbe gestiones de cobranza en días festivos." };
+
+  if (diaSemana === 0)
+    return { permitido: false, motivo: "Los domingos están prohibidos para gestiones de cobranza según la Ley 2300." };
+
+  if (diaSemana === 6 && (hora < 8 || hora >= 15))
+    return { permitido: false, motivo: `Sábados solo se permite gestionar entre 8:00 AM y 3:00 PM. Hora actual: ${ahora.toLocaleTimeString("es-CO", { hour: "2-digit", minute: "2-digit" })}.` };
+
+  if (diaSemana >= 1 && diaSemana <= 5 && (hora < 7 || hora >= 19))
+    return { permitido: false, motivo: `Lunes a viernes solo se permite gestionar entre 7:00 AM y 7:00 PM. Hora actual: ${ahora.toLocaleTimeString("es-CO", { hour: "2-digit", minute: "2-digit" })}.` };
+
+  const yaGestionadoHoy = gestiones.some(g => g.clienteId === clienteId && g.timestamp?.startsWith(fechaHoy));
+  if (yaGestionadoHoy)
+    return { permitido: false, motivo: "Este cliente ya fue contactado hoy. La Ley 2300 permite máximo un contacto por día por cliente." };
+
+  return { permitido: true, motivo: null };
+}
+
+function getHorarioPermitido() {
+  const dia = new Date().getDay();
+  if (dia === 0) return "No permitido (domingo)";
+  if (dia === 6) return "8:00 AM – 3:00 PM";
+  return "7:00 AM – 7:00 PM";
+}
+
+let DB_GESTIONES = [];
+function guardarGestion(gestion) {
+  DB_GESTIONES = [...DB_GESTIONES, { ...gestion, id: Date.now(), timestamp: new Date().toISOString() }];
+  return DB_GESTIONES;
+}
+
+// ─── HELPERS ──────────────────────────────────────────────────────────────────
+function Badge({ etapa }) {
+  const cfg = ETAPA_CONFIG[etapa];
+  return (
+    <span style={{ background: cfg.badge, color: "#fff", fontSize: 11, fontWeight: 700, padding: "2px 8px", borderRadius: 4, letterSpacing: "0.05em", textTransform: "uppercase" }}>
+      {etapa}
+    </span>
+  );
+}
+
+function formatPeso(val) {
+  return new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 }).format(val);
+}
+
+// ─── PANTALLA: LOGIN ──────────────────────────────────────────────────────────
+function PantallaLogin({ onSelect }) {
+  return (
+    <div style={{ minHeight: "100vh", background: "#0a0a0a", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", fontFamily: "'DM Mono', monospace", padding: 32 }}>
+      <div style={{ marginBottom: 48, textAlign: "center" }}>
+        <div style={{ fontSize: 11, letterSpacing: "0.25em", color: "#555", marginBottom: 12, textTransform: "uppercase" }}>Sistema de Cobranza</div>
+        <h1 style={{ color: "#fff", fontSize: 36, fontWeight: 700, margin: 0, letterSpacing: "-0.02em" }}>Agente IA</h1>
+        <div style={{ color: "#444", fontSize: 13, marginTop: 8 }}>
+          {new Date().toLocaleDateString("es-CO", { weekday: "long", year: "numeric", month: "long", day: "numeric" })}
+        </div>
+      </div>
+      <div style={{ color: "#666", fontSize: 12, letterSpacing: "0.15em", textTransform: "uppercase", marginBottom: 20 }}>Selecciona tu etapa de mora</div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 12, width: "100%", maxWidth: 360 }}>
+        {ETAPAS.map(etapa => {
+          const cfg = ETAPA_CONFIG[etapa];
+          const count = CLIENTES_MOCK.filter(c => c.etapa === etapa).length;
+          return (
+            <button key={etapa} onClick={() => onSelect(etapa)}
+              style={{ background: "#111", border: `1px solid ${cfg.color}33`, borderLeft: `3px solid ${cfg.color}`, borderRadius: 8, padding: "16px 20px", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "space-between", color: "#fff" }}
+              onMouseEnter={e => e.currentTarget.style.background = "#1a1a1a"}
+              onMouseLeave={e => e.currentTarget.style.background = "#111"}
+            >
+              <div style={{ textAlign: "left" }}>
+                <div style={{ fontWeight: 700, fontSize: 15, color: cfg.color }}>{etapa}</div>
+                <div style={{ color: "#555", fontSize: 11, marginTop: 2 }}>{cfg.dias}</div>
+              </div>
+              <div style={{ color: "#444", fontSize: 12 }}>
+                <span style={{ color: cfg.color, fontWeight: 700, fontSize: 18 }}>{count}</span> clientes
+              </div>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ─── PANTALLA: LISTADO ────────────────────────────────────────────────────────
+function PantallaListado({ etapa, onSeleccionarCliente, gestiones, onVerRegistros, onCerrar }) {
+  const clientes = CLIENTES_MOCK.filter(c => c.etapa === etapa);
+  const cfg = ETAPA_CONFIG[etapa];
+  const getEstadoCliente = id => { const gs = gestiones.filter(g => g.clienteId === id); return gs.length ? gs[gs.length - 1].resultado : null; };
+  const gestionados = clientes.filter(c => getEstadoCliente(c.id) !== null).length;
+  const cumplimientoGeneral = verificarCumplimiento("__check__", gestiones);
+  const fueraDeHorario = !cumplimientoGeneral.permitido && !cumplimientoGeneral.motivo?.includes("ya fue contactado");
+
+  return (
+    <div style={{ minHeight: "100vh", background: "#0a0a0a", fontFamily: "'DM Mono', monospace" }}>
+      <div style={{ borderBottom: "1px solid #1a1a1a", padding: "20px 32px", display: "flex", alignItems: "center", justifyContent: "space-between", position: "sticky", top: 0, background: "#0a0a0a", zIndex: 10 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+          <button onClick={onCerrar} style={{ background: "none", border: "none", color: "#555", cursor: "pointer", fontSize: 18, padding: 0 }}>←</button>
+          <div>
+            <div style={{ color: cfg.color, fontWeight: 700, fontSize: 18 }}>{etapa}</div>
+            <div style={{ color: "#444", fontSize: 11 }}>{cfg.dias} · Horario: {getHorarioPermitido()}</div>
+          </div>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+          <div style={{ color: "#444", fontSize: 12 }}><span style={{ color: "#fff" }}>{gestionados}</span>/{clientes.length} gestionados</div>
+          <button onClick={onVerRegistros} style={{ background: "#1a1a1a", border: "1px solid #2a2a2a", color: "#888", fontSize: 11, padding: "6px 12px", borderRadius: 6, cursor: "pointer" }}>Ver registros</button>
+        </div>
+      </div>
+
+      {fueraDeHorario && (
+        <div style={{ background: "#1a0a00", border: "1px solid #ef444433", borderLeft: "3px solid #ef4444", margin: "16px 32px", borderRadius: 8, padding: "12px 16px", display: "flex", alignItems: "flex-start", gap: 10 }}>
+          <span style={{ fontSize: 16 }}>⚠</span>
+          <div>
+            <div style={{ color: "#ef4444", fontWeight: 700, fontSize: 12, marginBottom: 2 }}>Fuera de horario permitido — Ley 2300</div>
+            <div style={{ color: "#888", fontSize: 11, lineHeight: 1.5 }}>{cumplimientoGeneral.motivo}</div>
+          </div>
+        </div>
+      )}
+
+      <div style={{ padding: "16px 32px 24px", maxWidth: 800, margin: "0 auto" }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {clientes.map(cliente => {
+            const estado = getEstadoCliente(cliente.id);
+            const cumplimiento = verificarCumplimiento(cliente.id, gestiones);
+            const bloqueado = !cumplimiento.permitido;
+            return (
+              <div key={cliente.id} onClick={() => !bloqueado && onSeleccionarCliente(cliente)}
+                style={{ background: bloqueado ? "#0d0d0d" : "#111", border: "1px solid #1e1e1e", borderRadius: 10, padding: "16px 20px", cursor: bloqueado ? "not-allowed" : "pointer", display: "flex", alignItems: "center", justifyContent: "space-between", opacity: bloqueado ? 0.6 : 1 }}
+                onMouseEnter={e => { if (!bloqueado) e.currentTarget.style.borderColor = cfg.color + "44"; }}
+                onMouseLeave={e => e.currentTarget.style.borderColor = "#1e1e1e"}
+              >
+                <div>
+                  <div style={{ color: bloqueado ? "#555" : "#fff", fontWeight: 600, fontSize: 14, marginBottom: 4 }}>{cliente.nombre}</div>
+                  <div style={{ color: "#3a3a3a", fontSize: 11 }}>CC {cliente.cedula} · {cliente.telefono}</div>
+                  {bloqueado && <div style={{ color: "#ef444488", fontSize: 10, marginTop: 4 }}>🔒 {cumplimiento.motivo?.includes("contactado hoy") ? "Ya contactado hoy" : "Fuera de horario"}</div>}
+                </div>
+                <div style={{ textAlign: "right" }}>
+                  <div style={{ color: bloqueado ? "#333" : cfg.color, fontWeight: 700, fontSize: 15 }}>{formatPeso(cliente.saldo)}</div>
+                  <div style={{ color: "#3a3a3a", fontSize: 11, marginTop: 2 }}>{cliente.diasMora} días</div>
+                  {estado && <div style={{ marginTop: 4, fontSize: 10, color: estado === "Compromiso de pago" ? "#22c55e" : estado === "No contestó" ? "#f59e0b" : "#888", fontWeight: 600 }}>✓ {estado}</div>}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── PANTALLA: GESTIÓN ────────────────────────────────────────────────────────
+function PantallaGestion({ cliente, etapa, gestiones, onGuardar, onVolver, onAbrirWhatsApp }) {
+  const [resultado, setResultado] = useState("");
+  const [fecha, setFecha] = useState("");
+  const [monto, setMonto] = useState("");
+  const [medioPago, setMedioPago] = useState("");
+  const [observaciones, setObservaciones] = useState("");
+  const [guardado, setGuardado] = useState(false);
+  const [mostrarIA, setMostrarIA] = useState(false);
+  const [sugerenciaIA, setSugerenciaIA] = useState("");
+  const [cargandoIA, setCargandoIA] = useState(false);
+
+  const cfg = ETAPA_CONFIG[etapa];
+  const cumplimiento = verificarCumplimiento(cliente.id, gestiones);
+  const RESULTADOS = ["Contactado - sin compromiso", "Compromiso de pago", "No contestó", "Número equivocado", "Ya pagó"];
+
+  async function pedirSugerenciaIA() {
+    setCargandoIA(true); setMostrarIA(true); setSugerenciaIA("");
+    try {
+      const res = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: "claude-sonnet-4-20250514",
+          max_tokens: 1000,
+          system: `Eres un asistente de cobranza experto en el mercado colombiano. Eres directo, profesional y empático. Das sugerencias breves y concretas. Responde siempre en español colombiano natural. Sin bullets, sin encabezados, en texto corrido de máximo 4 oraciones.`,
+          messages: [{ role: "user", content: `Cliente: ${cliente.nombre}\nDeuda: ${formatPeso(cliente.saldo)}\nDías en mora: ${cliente.diasMora}\nEtapa: ${etapa}\nResultado hoy: ${resultado || "aún sin gestión"}\n\nDame una sugerencia corta sobre cómo abordar esta gestión o qué decirle al cliente.` }],
+        }),
+      });
+      const data = await res.json();
+      setSugerenciaIA(data.content?.find(b => b.type === "text")?.text || "Sin respuesta.");
+    } catch { setSugerenciaIA("No se pudo conectar con el agente IA."); }
+    setCargandoIA(false);
+  }
+
+  function handleGuardar() {
+    if (!resultado) return;
+    onGuardar({ clienteId: cliente.id, clienteNombre: cliente.nombre, cedula: cliente.cedula, etapa, resultado, fechaCompromiso: fecha || null, montoCompromiso: monto || null, medioPago: medioPago || null, observaciones, cobrador: etapa });
+    setGuardado(true);
+    setTimeout(() => onVolver(), 1200);
+  }
+
+  return (
+    <div style={{ minHeight: "100vh", background: "#0a0a0a", fontFamily: "'DM Mono', monospace" }}>
+      <div style={{ borderBottom: "1px solid #1a1a1a", padding: "20px 32px", display: "flex", alignItems: "center", gap: 16, position: "sticky", top: 0, background: "#0a0a0a", zIndex: 10 }}>
+        <button onClick={onVolver} style={{ background: "none", border: "none", color: "#555", cursor: "pointer", fontSize: 18, padding: 0 }}>←</button>
+        <div>
+          <div style={{ color: "#fff", fontWeight: 700, fontSize: 16 }}>{cliente.nombre}</div>
+          <div style={{ color: "#444", fontSize: 11 }}>CC {cliente.cedula} · <Badge etapa={etapa} /></div>
+        </div>
+      </div>
+
+      <div style={{ padding: "24px 32px", maxWidth: 640, margin: "0 auto" }}>
+        {!cumplimiento.permitido && (
+          <div style={{ background: "#1a0a00", border: "1px solid #ef444433", borderLeft: "3px solid #ef4444", borderRadius: 8, padding: "14px 16px", marginBottom: 20, display: "flex", gap: 10 }}>
+            <span style={{ fontSize: 18 }}>🔒</span>
+            <div>
+              <div style={{ color: "#ef4444", fontWeight: 700, fontSize: 12, marginBottom: 4 }}>Gestión bloqueada — Ley 2300</div>
+              <div style={{ color: "#888", fontSize: 11, lineHeight: 1.6 }}>{cumplimiento.motivo}</div>
+            </div>
+          </div>
+        )}
+
+        <div style={{ background: "#111", border: `1px solid ${cfg.color}22`, borderRadius: 10, padding: "16px 20px", marginBottom: 24, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+          <div><div style={{ color: "#444", fontSize: 10, textTransform: "uppercase", letterSpacing: "0.1em" }}>Saldo en mora</div><div style={{ color: cfg.color, fontWeight: 700, fontSize: 22 }}>{formatPeso(cliente.saldo)}</div></div>
+          <div><div style={{ color: "#444", fontSize: 10, textTransform: "uppercase", letterSpacing: "0.1em" }}>Días</div><div style={{ color: "#fff", fontWeight: 700, fontSize: 22 }}>{cliente.diasMora}</div></div>
+          <div><div style={{ color: "#444", fontSize: 10, textTransform: "uppercase", letterSpacing: "0.1em" }}>Teléfono</div><div style={{ color: "#aaa", fontSize: 14 }}>{cliente.telefono}</div></div>
+          <div><div style={{ color: "#444", fontSize: 10, textTransform: "uppercase", letterSpacing: "0.1em" }}>Cédula</div><div style={{ color: "#aaa", fontSize: 14 }}>{cliente.cedula}</div></div>
+        </div>
+
+        <div style={{ marginBottom: 20 }}>
+          <div style={{ color: "#555", fontSize: 11, letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: 10 }}>Resultado de la gestión</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            {RESULTADOS.map(r => (
+              <button key={r} onClick={() => setResultado(r)}
+                style={{ background: resultado === r ? cfg.color + "22" : "#111", border: resultado === r ? `1px solid ${cfg.color}` : "1px solid #1e1e1e", borderRadius: 8, padding: "10px 16px", color: resultado === r ? cfg.color : "#666", fontSize: 13, cursor: "pointer", textAlign: "left", fontFamily: "'DM Mono', monospace" }}>
+                {resultado === r ? "● " : "○ "}{r}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {resultado === "Compromiso de pago" && (
+          <div style={{ background: "#111", border: "1px solid #1e1e1e", borderRadius: 10, padding: 16, marginBottom: 20 }}>
+            <div style={{ color: "#555", fontSize: 11, letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: 12 }}>Compromiso de pago</div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 12 }}>
+              <div>
+                <div style={{ color: "#444", fontSize: 11, marginBottom: 6 }}>Fecha prometida</div>
+                <input type="date" value={fecha} onChange={e => setFecha(e.target.value)} style={{ width: "100%", background: "#0a0a0a", border: "1px solid #2a2a2a", borderRadius: 6, padding: "8px 10px", color: "#fff", fontFamily: "'DM Mono', monospace", fontSize: 12, boxSizing: "border-box" }} />
+              </div>
+              <div>
+                <div style={{ color: "#444", fontSize: 11, marginBottom: 6 }}>Monto comprometido</div>
+                <input type="number" placeholder="0" value={monto} onChange={e => setMonto(e.target.value)} style={{ width: "100%", background: "#0a0a0a", border: "1px solid #2a2a2a", borderRadius: 6, padding: "8px 10px", color: "#fff", fontFamily: "'DM Mono', monospace", fontSize: 12, boxSizing: "border-box" }} />
+              </div>
+            </div>
+            <div style={{ color: "#444", fontSize: 11, marginBottom: 8 }}>Medio de pago</div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              {MEDIOS_PAGO.map(mp => (
+                <button key={mp.id} onClick={() => setMedioPago(mp.id)}
+                  style={{ background: medioPago === mp.id ? "#22c55e11" : "#0a0a0a", border: medioPago === mp.id ? "1px solid #22c55e" : "1px solid #2a2a2a", borderRadius: 8, padding: "10px 14px", cursor: "pointer", textAlign: "left", fontFamily: "'DM Mono', monospace" }}>
+                  <div style={{ color: medioPago === mp.id ? "#22c55e" : "#888", fontSize: 12, fontWeight: 600 }}>{mp.label}</div>
+                  <div style={{ color: "#444", fontSize: 10, marginTop: 2 }}>{mp.detalle}</div>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <div style={{ marginBottom: 20 }}>
+          <div style={{ color: "#555", fontSize: 11, letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: 8 }}>Observaciones</div>
+          <textarea value={observaciones} onChange={e => setObservaciones(e.target.value)} placeholder="Notas sobre la gestión..." rows={3}
+            style={{ width: "100%", background: "#111", border: "1px solid #1e1e1e", borderRadius: 8, padding: "10px 14px", color: "#aaa", fontFamily: "'DM Mono', monospace", fontSize: 12, resize: "vertical", boxSizing: "border-box" }} />
+        </div>
+
+        <div style={{ marginBottom: 16 }}>
+          <button onClick={pedirSugerenciaIA} style={{ background: "none", border: "1px solid #2a2a2a", color: "#555", fontSize: 11, padding: "8px 14px", borderRadius: 6, cursor: "pointer", fontFamily: "'DM Mono', monospace" }}>
+            ✦ Pedir sugerencia al agente IA
+          </button>
+          {mostrarIA && (
+            <div style={{ marginTop: 10, background: "#0d1117", border: "1px solid #1e3a2a", borderRadius: 8, padding: "12px 16px" }}>
+              {cargandoIA ? <div style={{ color: "#22c55e", fontSize: 12 }}>Pensando...</div> : <div style={{ color: "#aaa", fontSize: 12, lineHeight: 1.6 }}>{sugerenciaIA}</div>}
+            </div>
+          )}
+        </div>
+
+        <button onClick={onAbrirWhatsApp}
+          style={{ width: "100%", background: "#0d1f14", border: "1px solid #25d36622", borderRadius: 10, padding: "12px", color: "#25d366", fontFamily: "'DM Mono', monospace", fontWeight: 600, fontSize: 13, cursor: "pointer", marginBottom: 12 }}>
+          💬 Abrir asistente WhatsApp
+        </button>
+
+        <button onClick={handleGuardar} disabled={!resultado || guardado || !cumplimiento.permitido}
+          style={{ width: "100%", background: guardado ? "#22c55e" : (resultado && cumplimiento.permitido) ? cfg.color : "#1a1a1a", border: "none", borderRadius: 10, padding: "14px", color: (resultado && cumplimiento.permitido) ? "#000" : "#333", fontFamily: "'DM Mono', monospace", fontWeight: 700, fontSize: 14, cursor: (resultado && cumplimiento.permitido) ? "pointer" : "not-allowed" }}>
+          {guardado ? "✓ Guardado" : !cumplimiento.permitido ? "🔒 Bloqueado — Ley 2300" : "Registrar gestión"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ─── PANTALLA: WHATSAPP ───────────────────────────────────────────────────────
+function PantallaWhatsApp({ cliente, etapa, gestiones, onVolver }) {
+  const cfg = ETAPA_CONFIG[etapa];
+  const [mensajes, setMensajes] = useState([{ rol: "sistema", texto: `Conversación con ${cliente.nombre} iniciada. El agente IA te sugerirá respuestas en tiempo real.`, hora: new Date().toLocaleTimeString("es-CO", { hour: "2-digit", minute: "2-digit" }) }]);
+  const [inputCliente, setInputCliente] = useState("");
+  const [inputCobrador, setInputCobrador] = useState("");
+  const [cargandoSugerencia, setCargandoSugerencia] = useState(false);
+  const [sugerencia, setSugerencia] = useState("");
+  const historialGestiones = gestiones.filter(g => g.clienteId === cliente.id);
+
+  async function pedirSugerencia(mensajeCliente, hiloConversacion) {
+    setCargandoSugerencia(true); setSugerencia("");
+    try {
+      const hilo = hiloConversacion.filter(m => m.rol !== "sistema").map(m => `${m.rol === "cliente" ? cliente.nombre : "Cobrador"}: ${m.texto}`).join("\n");
+      const historial = historialGestiones.length > 0 ? `Historial:\n${historialGestiones.map(g => `- ${g.resultado}${g.fechaCompromiso ? ` (compromiso: ${g.fechaCompromiso})` : ""}`).join("\n")}` : "Sin gestiones previas.";
+      const res = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: "claude-sonnet-4-20250514",
+          max_tokens: 1000,
+          system: `Eres un asistente de cobranza experto para el mercado colombiano. Sugiere el mejor mensaje de WhatsApp para responderle al cliente deudor. Sé empático pero firme. Nunca amenaces (Ley 2300). Ofrece soluciones concretas. Máximo 3 oraciones. Responde SOLO con el texto sugerido, sin explicaciones ni comillas.`,
+          messages: [{ role: "user", content: `Cliente: ${cliente.nombre}\nDeuda: ${formatPeso(cliente.saldo)} · ${cliente.diasMora} días · Etapa: ${etapa}\n${historial}\n\nHilo:\n${hilo}\n\nÚltimo mensaje: "${mensajeCliente}"\n\nSugiere la mejor respuesta.` }],
+        }),
+      });
+      const data = await res.json();
+      const texto = data.content?.find(b => b.type === "text")?.text || "";
+      setSugerencia(texto); setInputCobrador(texto);
+    } catch { setSugerencia("No se pudo generar sugerencia."); }
+    setCargandoSugerencia(false);
+  }
+
+  function agregarMensajeCliente() {
+    if (!inputCliente.trim()) return;
+    const hora = new Date().toLocaleTimeString("es-CO", { hour: "2-digit", minute: "2-digit" });
+    const nuevoMensaje = { rol: "cliente", texto: inputCliente.trim(), hora };
+    const nuevoHilo = [...mensajes, nuevoMensaje];
+    setMensajes(nuevoHilo);
+    pedirSugerencia(inputCliente.trim(), nuevoHilo);
+    setInputCliente("");
+  }
+
+  function enviarMensajeCobrador() {
+    if (!inputCobrador.trim()) return;
+    setMensajes(prev => [...prev, { rol: "cobrador", texto: inputCobrador.trim(), hora: new Date().toLocaleTimeString("es-CO", { hour: "2-digit", minute: "2-digit" }) }]);
+    setInputCobrador(""); setSugerencia("");
+  }
+
+  return (
+    <div style={{ minHeight: "100vh", background: "#0a0a0a", fontFamily: "'DM Mono', monospace", display: "flex", flexDirection: "column" }}>
+      <div style={{ borderBottom: "1px solid #1a1a1a", padding: "16px 24px", display: "flex", alignItems: "center", gap: 14, background: "#0a0a0a", position: "sticky", top: 0, zIndex: 10 }}>
+        <button onClick={onVolver} style={{ background: "none", border: "none", color: "#555", cursor: "pointer", fontSize: 18, padding: 0 }}>←</button>
+        <div style={{ width: 36, height: 36, borderRadius: "50%", background: cfg.color + "22", border: `1px solid ${cfg.color}44`, display: "flex", alignItems: "center", justifyContent: "center", color: cfg.color, fontWeight: 700, fontSize: 14 }}>{cliente.nombre.charAt(0)}</div>
+        <div style={{ flex: 1 }}>
+          <div style={{ color: "#fff", fontWeight: 700, fontSize: 14 }}>{cliente.nombre}</div>
+          <div style={{ color: "#444", fontSize: 10 }}>{cliente.telefono} · <Badge etapa={etapa} /></div>
+        </div>
+        <div style={{ textAlign: "right" }}>
+          <div style={{ color: cfg.color, fontWeight: 700, fontSize: 13 }}>{formatPeso(cliente.saldo)}</div>
+          <div style={{ color: "#444", fontSize: 10 }}>{cliente.diasMora} días mora</div>
+        </div>
+      </div>
+
+      <div style={{ background: "#0d1117", borderBottom: "1px solid #1a1a1a", padding: "8px 24px", display: "flex", alignItems: "center", gap: 8 }}>
+        <span style={{ color: "#22c55e", fontSize: 10 }}>●</span>
+        <span style={{ color: "#444", fontSize: 10 }}>Asistente IA activo · Ley 2300 aplicada · Conversaciones registradas</span>
+      </div>
+
+      <div style={{ flex: 1, overflowY: "auto", padding: "20px 24px", display: "flex", flexDirection: "column", gap: 12 }}>
+        {mensajes.map((m, i) => {
+          if (m.rol === "sistema") return <div key={i} style={{ textAlign: "center" }}><span style={{ background: "#111", border: "1px solid #1e1e1e", color: "#444", fontSize: 10, padding: "4px 12px", borderRadius: 20 }}>{m.texto}</span></div>;
+          const esCobrador = m.rol === "cobrador";
+          return (
+            <div key={i} style={{ display: "flex", justifyContent: esCobrador ? "flex-end" : "flex-start" }}>
+              <div style={{ maxWidth: "72%", background: esCobrador ? cfg.color + "18" : "#161616", border: esCobrador ? `1px solid ${cfg.color}33` : "1px solid #1e1e1e", borderRadius: esCobrador ? "12px 12px 2px 12px" : "12px 12px 12px 2px", padding: "10px 14px" }}>
+                <div style={{ color: esCobrador ? "#ddd" : "#aaa", fontSize: 13, lineHeight: 1.5 }}>{m.texto}</div>
+                <div style={{ color: "#333", fontSize: 9, marginTop: 4, textAlign: "right" }}>{m.hora}</div>
+              </div>
+            </div>
+          );
+        })}
+        {(cargandoSugerencia || sugerencia) && (
+          <div style={{ background: "#0d1a12", border: "1px solid #1e3a2a", borderRadius: 10, padding: "12px 14px", marginTop: 4 }}>
+            <div style={{ color: "#22c55e", fontSize: 10, letterSpacing: "0.1em", marginBottom: 6, textTransform: "uppercase" }}>✦ Sugerencia del agente IA</div>
+            {cargandoSugerencia ? <div style={{ color: "#22c55e55", fontSize: 12 }}>Generando respuesta...</div> : <div style={{ color: "#aaa", fontSize: 12, lineHeight: 1.6 }}>{sugerencia}</div>}
+          </div>
+        )}
+      </div>
+
+      <div style={{ borderTop: "1px solid #1a1a1a", padding: "12px 24px", background: "#0d0d0d" }}>
+        <div style={{ color: "#333", fontSize: 10, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.08em" }}>Simular mensaje del cliente</div>
+        <div style={{ display: "flex", gap: 8 }}>
+          <input value={inputCliente} onChange={e => setInputCliente(e.target.value)} onKeyDown={e => e.key === "Enter" && agregarMensajeCliente()} placeholder="Escribe lo que dice el cliente..."
+            style={{ flex: 1, background: "#111", border: "1px solid #1e1e1e", borderRadius: 8, padding: "8px 12px", color: "#aaa", fontFamily: "'DM Mono', monospace", fontSize: 12 }} />
+          <button onClick={agregarMensajeCliente} style={{ background: "#1a1a1a", border: "1px solid #2a2a2a", borderRadius: 8, padding: "8px 14px", color: "#555", cursor: "pointer", fontSize: 12, fontFamily: "'DM Mono', monospace" }}>→</button>
+        </div>
+      </div>
+
+      <div style={{ borderTop: "1px solid #1e1e1e", padding: "12px 24px 20px", background: "#0a0a0a" }}>
+        <div style={{ color: "#333", fontSize: 10, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.08em" }}>Tu respuesta</div>
+        <div style={{ display: "flex", gap: 8 }}>
+          <textarea value={inputCobrador} onChange={e => setInputCobrador(e.target.value)} placeholder="Edita o escribe tu respuesta..." rows={2}
+            style={{ flex: 1, background: "#111", border: `1px solid ${cfg.color}33`, borderRadius: 8, padding: "8px 12px", color: "#ddd", fontFamily: "'DM Mono', monospace", fontSize: 12, resize: "none" }} />
+          <button onClick={enviarMensajeCobrador} disabled={!inputCobrador.trim()}
+            style={{ background: inputCobrador.trim() ? cfg.color : "#1a1a1a", border: "none", borderRadius: 8, padding: "8px 16px", color: inputCobrador.trim() ? "#000" : "#333", cursor: inputCobrador.trim() ? "pointer" : "not-allowed", fontSize: 13, fontWeight: 700, fontFamily: "'DM Mono', monospace", alignSelf: "flex-end" }}>
+            Enviar
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── PANTALLA: REGISTROS ──────────────────────────────────────────────────────
+function PantallaRegistros({ gestiones, onVolver }) {
+  return (
+    <div style={{ minHeight: "100vh", background: "#0a0a0a", fontFamily: "'DM Mono', monospace" }}>
+      <div style={{ borderBottom: "1px solid #1a1a1a", padding: "20px 32px", display: "flex", alignItems: "center", gap: 16, position: "sticky", top: 0, background: "#0a0a0a" }}>
+        <button onClick={onVolver} style={{ background: "none", border: "none", color: "#555", cursor: "pointer", fontSize: 18, padding: 0 }}>←</button>
+        <div style={{ color: "#fff", fontWeight: 700, fontSize: 16 }}>Registros del día</div>
+        <div style={{ color: "#444", fontSize: 12, marginLeft: "auto" }}>{gestiones.length} gestiones</div>
+      </div>
+      <div style={{ padding: "24px 32px", maxWidth: 800, margin: "0 auto" }}>
+        {gestiones.length === 0 ? (
+          <div style={{ color: "#333", textAlign: "center", marginTop: 80, fontSize: 14 }}>No hay gestiones registradas aún</div>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {[...gestiones].reverse().map(g => {
+              const cfg = ETAPA_CONFIG[g.etapa];
+              return (
+                <div key={g.id} style={{ background: "#111", border: "1px solid #1e1e1e", borderRadius: 10, padding: "14px 18px" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
+                    <div style={{ color: "#fff", fontWeight: 600, fontSize: 13 }}>{g.clienteNombre}</div>
+                    <div style={{ color: "#333", fontSize: 10 }}>{new Date(g.timestamp).toLocaleTimeString("es-CO", { hour: "2-digit", minute: "2-digit" })}</div>
+                  </div>
+                  <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                    <Badge etapa={g.etapa} />
+                    <span style={{ fontSize: 11, color: g.resultado === "Compromiso de pago" ? "#22c55e" : g.resultado === "No contestó" ? "#f59e0b" : "#666", fontWeight: 600 }}>{g.resultado}</span>
+                    {g.fechaCompromiso && <span style={{ color: "#444", fontSize: 10 }}>· Pago: {g.fechaCompromiso}</span>}
+                    {g.montoCompromiso && <span style={{ color: cfg.color, fontSize: 10 }}>· {formatPeso(Number(g.montoCompromiso))}</span>}
+                  </div>
+                  {g.observaciones && <div style={{ color: "#444", fontSize: 11, marginTop: 6, borderTop: "1px solid #1a1a1a", paddingTop: 6 }}>{g.observaciones}</div>}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── APP PRINCIPAL ────────────────────────────────────────────────────────────
+export default function App() {
+  const [pantalla, setPantalla] = useState("login");
+  const [etapaActiva, setEtapaActiva] = useState(null);
+  const [clienteActivo, setClienteActivo] = useState(null);
+  const [gestiones, setGestiones] = useState([]);
+
+  useEffect(() => {
+    const link = document.createElement("link");
+    link.href = "https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500;700&display=swap";
+    link.rel = "stylesheet";
+    document.head.appendChild(link);
+  }, []);
+
+  function handleGuardarGestion(gestion) {
+    const nuevas = guardarGestion(gestion);
+    setGestiones([...nuevas]);
+  }
+
+  if (pantalla === "login") return <PantallaLogin onSelect={etapa => { setEtapaActiva(etapa); setPantalla("listado"); }} />;
+  if (pantalla === "registros") return <PantallaRegistros gestiones={gestiones} onVolver={() => setPantalla("listado")} />;
+  if (pantalla === "whatsapp" && clienteActivo) return <PantallaWhatsApp cliente={clienteActivo} etapa={etapaActiva} gestiones={gestiones} onVolver={() => setPantalla("gestion")} />;
+  if (pantalla === "gestion" && clienteActivo) return <PantallaGestion cliente={clienteActivo} etapa={etapaActiva} gestiones={gestiones} onGuardar={handleGuardarGestion} onVolver={() => setPantalla("listado")} onAbrirWhatsApp={() => setPantalla("whatsapp")} />;
+  return <PantallaListado etapa={etapaActiva} gestiones={gestiones} onSeleccionarCliente={c => { setClienteActivo(c); setPantalla("gestion"); }} onVerRegistros={() => setPantalla("registros")} onCerrar={() => setPantalla("login")} />;
+}
