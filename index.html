@@ -57,22 +57,6 @@ async function guardarGestionDB(g) {
   });
 }
 
-async function loginUsuario(email, password) {
-  const hash = await md5(password);
-  const data = await sbFetch(`usuarios?email=eq.${encodeURIComponent(email)}&password_hash=eq.${hash}&activo=eq.true&select=id,nombre,etapa,email`);
-  if (!data || data.length === 0) throw new Error("Credenciales incorrectas");
-  return data[0];
-}
-
-async function md5(message) {
-  // MD5 simple para comparar con el hash de Supabase
-  const msgBuffer = new TextEncoder().encode(message);
-  const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer);
-  // Usamos un enfoque diferente: enviamos la password en texto y usamos md5 via query
-  // En realidad hacemos la comparación directo con md5() de postgres via RPC
-  return message; // placeholder - usamos RPC abajo
-}
-
 async function loginConRPC(email, password) {
   const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/login_usuario`, {
     method: "POST",
@@ -104,6 +88,7 @@ const CLIENTES_MOCK = [
   { id: "012", nombre: "Iván Piedrahita", cedula: "14775678", telefono: "3503976058", saldo: 250000, diasMora: 20, etapa: "Corriente" },
 ];
 
+const ETAPAS = ["Corriente", "Prejurídica", "Jurídica", "Demanda"];
 const ETAPA_CONFIG = {
   Corriente:   { color: "#22c55e", badge: "#16a34a", dias: "1-30 días" },
   Prejurídica: { color: "#f59e0b", badge: "#d97706", dias: "31-60 días" },
@@ -142,7 +127,7 @@ function Badge({ etapa }) {
   }, etapa);
 }
 
-// ─── PANTALLA LOGIN ───────────────────────────────────────────────────────────
+// ─── LOGIN ────────────────────────────────────────────────────────────────────
 function PantallaLogin({ onLogin }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -156,9 +141,7 @@ function PantallaLogin({ onLogin }) {
     try {
       const usuario = await loginConRPC(email.trim().toLowerCase(), password);
       onLogin(usuario);
-    } catch(e) {
-      setError("Email o contraseña incorrectos.");
-    }
+    } catch(e) { setError("Email o contraseña incorrectos."); }
     setCargando(false);
   }
 
@@ -169,39 +152,24 @@ function PantallaLogin({ onLogin }) {
         <h1 style={{ color: "#fff", fontSize: 38, fontWeight: 700, margin: 0, letterSpacing: "-0.02em" }}>Agente IA</h1>
         <div style={{ color: "#555", fontSize: 13, marginTop: 10 }}>{new Date().toLocaleDateString("es-CO", { weekday: "long", year: "numeric", month: "long", day: "numeric" })}</div>
       </div>
-
       <div style={{ width: "100%", maxWidth: 380 }}>
         <div style={{ marginBottom: 16 }}>
           <div style={{ color: "#777", fontSize: 11, textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 8 }}>Email</div>
-          <input
-            type="email" value={email} onChange={e => setEmail(e.target.value)}
-            onKeyDown={e => e.key === "Enter" && handleLogin()}
-            placeholder="gestor@cobranza.co"
-            style={{ width: "100%", background: "#181818", border: "1px solid #2a2a2a", borderRadius: 10, padding: "14px 16px", color: "#fff", fontSize: 14 }}
-          />
+          <input type="email" value={email} onChange={e => setEmail(e.target.value)} onKeyDown={e => e.key === "Enter" && handleLogin()} placeholder="gestor@cobranza.co"
+            style={{ width: "100%", background: "#181818", border: "1px solid #2a2a2a", borderRadius: 10, padding: "14px 16px", color: "#fff", fontSize: 14 }} />
         </div>
         <div style={{ marginBottom: 24 }}>
           <div style={{ color: "#777", fontSize: 11, textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 8 }}>Contraseña</div>
           <div style={{ position: "relative" }}>
-            <input
-              type={mostrarPassword ? "text" : "password"} value={password} onChange={e => setPassword(e.target.value)}
-              onKeyDown={e => e.key === "Enter" && handleLogin()}
-              placeholder="••••••••"
-              style={{ width: "100%", background: "#181818", border: "1px solid #2a2a2a", borderRadius: 10, padding: "14px 16px", color: "#fff", fontSize: 14 }}
-            />
+            <input type={mostrarPassword ? "text" : "password"} value={password} onChange={e => setPassword(e.target.value)} onKeyDown={e => e.key === "Enter" && handleLogin()} placeholder="••••••••"
+              style={{ width: "100%", background: "#181818", border: "1px solid #2a2a2a", borderRadius: 10, padding: "14px 16px", color: "#fff", fontSize: 14 }} />
             <button onClick={() => setMostrarPassword(!mostrarPassword)}
               style={{ position: "absolute", right: 14, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", color: "#555", cursor: "pointer", fontSize: 12 }}>
               {mostrarPassword ? "ocultar" : "ver"}
             </button>
           </div>
         </div>
-
-        {error && (
-          <div style={{ background: "#1c0a00", border: "1px solid #ef444444", borderRadius: 8, padding: "10px 14px", marginBottom: 16, color: "#f87171", fontSize: 13 }}>
-            {error}
-          </div>
-        )}
-
+        {error && <div style={{ background: "#1c0a00", border: "1px solid #ef444444", borderRadius: 8, padding: "10px 14px", marginBottom: 16, color: "#f87171", fontSize: 13 }}>{error}</div>}
         <button onClick={handleLogin} disabled={cargando}
           style={{ width: "100%", background: cargando ? "#222" : "#fff", border: "none", borderRadius: 10, padding: 16, color: cargando ? "#555" : "#000", fontWeight: 700, fontSize: 15, cursor: cargando ? "not-allowed" : "pointer" }}>
           {cargando ? "Verificando..." : "Ingresar"}
@@ -211,7 +179,44 @@ function PantallaLogin({ onLogin }) {
   );
 }
 
-// ─── PANTALLA LISTADO ─────────────────────────────────────────────────────────
+// ─── SELECTOR DE ETAPA (solo coordinador) ─────────────────────────────────────
+function PantallaSelectEtapa({ usuario, gestiones, onSelect, onCerrarSesion }) {
+  return (
+    <div style={{ minHeight: "100vh", background: "#0f0f0f", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 32 }}>
+      <div style={{ marginBottom: 40, textAlign: "center" }}>
+        <div style={{ fontSize: 11, letterSpacing: "0.25em", color: "#555", marginBottom: 8, textTransform: "uppercase" }}>Coordinador</div>
+        <h2 style={{ color: "#fff", fontSize: 28, fontWeight: 700, margin: 0 }}>{usuario.nombre}</h2>
+        <div style={{ color: "#555", fontSize: 13, marginTop: 8 }}>Selecciona una etapa para gestionar</div>
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 12, width: "100%", maxWidth: 380 }}>
+        {ETAPAS.map(etapa => {
+          const cfg = ETAPA_CONFIG[etapa];
+          const count = CLIENTES_MOCK.filter(c => c.etapa === etapa).length;
+          const fechaHoy = new Date().toISOString().split("T")[0];
+          const gestionadosHoy = CLIENTES_MOCK.filter(c => c.etapa === etapa && gestiones.some(g => (g.cliente_id || g.clienteId) === c.id && (g.created_at || g.timestamp || "").startsWith(fechaHoy))).length;
+          return (
+            <button key={etapa} onClick={() => onSelect(etapa)}
+              style={{ background: "#181818", border: `1px solid ${cfg.color}44`, borderLeft: `4px solid ${cfg.color}`, borderRadius: 10, padding: "18px 20px", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <div style={{ textAlign: "left" }}>
+                <div style={{ fontWeight: 700, fontSize: 16, color: cfg.color }}>{etapa}</div>
+                <div style={{ color: "#777", fontSize: 12, marginTop: 3 }}>{cfg.dias}</div>
+              </div>
+              <div style={{ textAlign: "right" }}>
+                <div style={{ color: cfg.color, fontWeight: 700, fontSize: 20 }}>{count}</div>
+                <div style={{ color: "#555", fontSize: 11, marginTop: 2 }}>{gestionadosHoy}/{count} hoy</div>
+              </div>
+            </button>
+          );
+        })}
+      </div>
+      <button onClick={onCerrarSesion} style={{ marginTop: 32, background: "none", border: "none", color: "#555", fontSize: 12, cursor: "pointer", textDecoration: "underline" }}>
+        Cerrar sesión
+      </button>
+    </div>
+  );
+}
+
+// ─── LISTADO ──────────────────────────────────────────────────────────────────
 function PantallaListado({ etapa, usuario, onSeleccionarCliente, gestiones, onVerRegistros, onCerrar }) {
   const clientes = CLIENTES_MOCK.filter(c => c.etapa === etapa);
   const cfg = ETAPA_CONFIG[etapa];
@@ -219,6 +224,7 @@ function PantallaListado({ etapa, usuario, onSeleccionarCliente, gestiones, onVe
   const gestionados = clientes.filter(c => getEstado(c.id) !== null).length;
   const cumGeneral = verificarCumplimiento("__", gestiones);
   const fueraHorario = !cumGeneral.permitido && !cumGeneral.motivo?.includes("contactado hoy");
+  const esCoordinador = usuario.etapa === "todas";
 
   return (
     <div style={{ minHeight: "100vh", background: "#0f0f0f" }}>
@@ -227,7 +233,9 @@ function PantallaListado({ etapa, usuario, onSeleccionarCliente, gestiones, onVe
           <button onClick={onCerrar} style={{ background: "none", border: "none", color: "#777", cursor: "pointer", fontSize: 20 }}>←</button>
           <div>
             <div style={{ color: cfg.color, fontWeight: 700, fontSize: 20 }}>{etapa}</div>
-            <div style={{ color: "#666", fontSize: 11, marginTop: 2 }}>{usuario.nombre} · {cfg.dias}</div>
+            <div style={{ color: "#666", fontSize: 11, marginTop: 2 }}>
+              {esCoordinador ? "👁 Coordinador" : usuario.nombre} · {cfg.dias}
+            </div>
           </div>
         </div>
         <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
@@ -247,23 +255,14 @@ function PantallaListado({ etapa, usuario, onSeleccionarCliente, gestiones, onVe
           const cum = verificarCumplimiento(cliente.id, gestiones);
           return (
             <div key={cliente.id} onClick={() => cum.permitido && onSeleccionarCliente(cliente)}
-              style={{
-                background: cum.permitido ? "#181818" : "#141414",
-                border: cum.permitido ? "1px solid #252525" : "1px solid #1e1e1e",
-                borderLeft: cum.permitido ? `3px solid ${cfg.color}` : "3px solid #333",
-                borderRadius: 10, padding: "16px 18px",
-                cursor: cum.permitido ? "pointer" : "default",
-                display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10
-              }}>
+              style={{ background: cum.permitido ? "#181818" : "#141414", border: cum.permitido ? "1px solid #252525" : "1px solid #1e1e1e", borderLeft: cum.permitido ? `3px solid ${cfg.color}` : "3px solid #333", borderRadius: 10, padding: "16px 18px", cursor: cum.permitido ? "pointer" : "default", display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
               <div style={{ flex: 1 }}>
                 <div style={{ color: cum.permitido ? "#fff" : "#888", fontWeight: 600, fontSize: 15, marginBottom: 4 }}>{cliente.nombre}</div>
                 <div style={{ color: cum.permitido ? "#666" : "#555", fontSize: 12 }}>CC {cliente.cedula} · {cliente.telefono}</div>
                 {!cum.permitido && (
                   <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 6 }}>
                     <span style={{ fontSize: 11 }}>🔒</span>
-                    <span style={{ color: "#e07070", fontSize: 12, fontWeight: 500 }}>
-                      {cum.motivo?.includes("contactado hoy") ? "Ya contactado hoy" : "Fuera de horario"}
-                    </span>
+                    <span style={{ color: "#e07070", fontSize: 12, fontWeight: 500 }}>{cum.motivo?.includes("contactado hoy") ? "Ya contactado hoy" : "Fuera de horario"}</span>
                   </div>
                 )}
               </div>
@@ -280,7 +279,7 @@ function PantallaListado({ etapa, usuario, onSeleccionarCliente, gestiones, onVe
   );
 }
 
-// ─── PANTALLA GESTIÓN ─────────────────────────────────────────────────────────
+// ─── GESTIÓN ──────────────────────────────────────────────────────────────────
 function PantallaGestion({ cliente, etapa, usuario, gestiones, onGuardar, onVolver, onAbrirWhatsApp }) {
   const [resultado, setResultado] = useState("");
   const [fecha, setFecha] = useState("");
@@ -402,7 +401,7 @@ function PantallaGestion({ cliente, etapa, usuario, gestiones, onGuardar, onVolv
   );
 }
 
-// ─── PANTALLA WHATSAPP ────────────────────────────────────────────────────────
+// ─── WHATSAPP ─────────────────────────────────────────────────────────────────
 function PantallaWhatsApp({ cliente, etapa, gestiones, onVolver }) {
   const cfg = ETAPA_CONFIG[etapa];
   const [mensajes, setMensajes] = useState([{ rol: "sistema", texto: `Conversación con ${cliente.nombre} iniciada.`, hora: new Date().toLocaleTimeString("es-CO", { hour: "2-digit", minute: "2-digit" }) }]);
@@ -496,7 +495,7 @@ function PantallaWhatsApp({ cliente, etapa, gestiones, onVolver }) {
   );
 }
 
-// ─── PANTALLA REGISTROS ───────────────────────────────────────────────────────
+// ─── REGISTROS ────────────────────────────────────────────────────────────────
 function PantallaRegistros({ gestiones, cargando, onVolver }) {
   return (
     <div style={{ minHeight: "100vh", background: "#0f0f0f" }}>
@@ -537,10 +536,11 @@ function PantallaRegistros({ gestiones, cargando, onVolver }) {
   );
 }
 
-// ─── APP PRINCIPAL ────────────────────────────────────────────────────────────
+// ─── APP ──────────────────────────────────────────────────────────────────────
 function App() {
   const [pantalla, setPantalla] = useState("login");
   const [usuario, setUsuario] = useState(null);
+  const [etapaActiva, setEtapaActiva] = useState(null);
   const [clienteActivo, setClienteActivo] = useState(null);
   const [gestiones, setGestiones] = useState([]);
   const [cargandoGestiones, setCargandoGestiones] = useState(false);
@@ -560,20 +560,39 @@ function App() {
 
   function handleLogin(usr) {
     setUsuario(usr);
-    setPantalla("listado");
+    if (usr.etapa === "todas") {
+      setPantalla("selectEtapa");
+    } else {
+      setEtapaActiva(usr.etapa);
+      setPantalla("listado");
+    }
   }
 
   function handleCerrarSesion() {
-    setUsuario(null);
-    setGestiones([]);
+    setUsuario(null); setEtapaActiva(null); setGestiones([]);
     setPantalla("login");
   }
 
+  function handleVolverListado() {
+    setClienteActivo(null);
+    setPantalla("listado");
+  }
+
+  function handleVolverSelectEtapa() {
+    if (usuario?.etapa === "todas") {
+      setEtapaActiva(null);
+      setPantalla("selectEtapa");
+    } else {
+      handleCerrarSesion();
+    }
+  }
+
   if (pantalla === "login") return <PantallaLogin onLogin={handleLogin} />;
+  if (pantalla === "selectEtapa") return <PantallaSelectEtapa usuario={usuario} gestiones={gestiones} onSelect={e => { setEtapaActiva(e); setPantalla("listado"); }} onCerrarSesion={handleCerrarSesion} />;
   if (pantalla === "registros") return <PantallaRegistros gestiones={gestiones} cargando={cargandoGestiones} onVolver={() => setPantalla("listado")} />;
-  if (pantalla === "whatsapp" && clienteActivo) return <PantallaWhatsApp cliente={clienteActivo} etapa={usuario.etapa} gestiones={gestiones} onVolver={() => setPantalla("gestion")} />;
-  if (pantalla === "gestion" && clienteActivo) return <PantallaGestion cliente={clienteActivo} etapa={usuario.etapa} usuario={usuario} gestiones={gestiones} onGuardar={handleGuardarGestion} onVolver={() => setPantalla("listado")} onAbrirWhatsApp={() => setPantalla("whatsapp")} />;
-  return <PantallaListado etapa={usuario.etapa} usuario={usuario} gestiones={gestiones} onSeleccionarCliente={c => { setClienteActivo(c); setPantalla("gestion"); }} onVerRegistros={() => setPantalla("registros")} onCerrar={handleCerrarSesion} />;
+  if (pantalla === "whatsapp" && clienteActivo) return <PantallaWhatsApp cliente={clienteActivo} etapa={etapaActiva} gestiones={gestiones} onVolver={() => setPantalla("gestion")} />;
+  if (pantalla === "gestion" && clienteActivo) return <PantallaGestion cliente={clienteActivo} etapa={etapaActiva} usuario={usuario} gestiones={gestiones} onGuardar={handleGuardarGestion} onVolver={handleVolverListado} onAbrirWhatsApp={() => setPantalla("whatsapp")} />;
+  return <PantallaListado etapa={etapaActiva} usuario={usuario} gestiones={gestiones} onSeleccionarCliente={c => { setClienteActivo(c); setPantalla("gestion"); }} onVerRegistros={() => setPantalla("registros")} onCerrar={handleVolverSelectEtapa} />;
 }
 
 ReactDOM.createRoot(document.getElementById("root")).render(<App />);
