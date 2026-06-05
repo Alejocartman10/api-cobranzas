@@ -57,6 +57,38 @@ async function guardarGestionDB(g) {
   });
 }
 
+async function loginUsuario(email, password) {
+  const hash = await md5(password);
+  const data = await sbFetch(`usuarios?email=eq.${encodeURIComponent(email)}&password_hash=eq.${hash}&activo=eq.true&select=id,nombre,etapa,email`);
+  if (!data || data.length === 0) throw new Error("Credenciales incorrectas");
+  return data[0];
+}
+
+async function md5(message) {
+  // MD5 simple para comparar con el hash de Supabase
+  const msgBuffer = new TextEncoder().encode(message);
+  const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer);
+  // Usamos un enfoque diferente: enviamos la password en texto y usamos md5 via query
+  // En realidad hacemos la comparación directo con md5() de postgres via RPC
+  return message; // placeholder - usamos RPC abajo
+}
+
+async function loginConRPC(email, password) {
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/login_usuario`, {
+    method: "POST",
+    headers: {
+      "apikey": SUPABASE_KEY,
+      "Authorization": `Bearer ${SUPABASE_KEY}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({ p_email: email, p_password: password })
+  });
+  if (!res.ok) throw new Error("Error de conexión");
+  const data = await res.json();
+  if (!data || data.length === 0) throw new Error("Credenciales incorrectas");
+  return data[0];
+}
+
 const CLIENTES_MOCK = [
   { id: "001", nombre: "Benjamin Caro Molina", cedula: "298238", telefono: "3138111212", saldo: 1994987, diasMora: 60, etapa: "Prejurídica" },
   { id: "002", nombre: "Luis Enrique Molina Molina", cedula: "3730786", telefono: "3004832080", saldo: 2297865, diasMora: 30, etapa: "Corriente" },
@@ -72,7 +104,6 @@ const CLIENTES_MOCK = [
   { id: "012", nombre: "Iván Piedrahita", cedula: "14775678", telefono: "3503976058", saldo: 250000, diasMora: 20, etapa: "Corriente" },
 ];
 
-const ETAPAS = ["Corriente", "Prejurídica", "Jurídica", "Demanda"];
 const ETAPA_CONFIG = {
   Corriente:   { color: "#22c55e", badge: "#16a34a", dias: "1-30 días" },
   Prejurídica: { color: "#f59e0b", badge: "#d97706", dias: "31-60 días" },
@@ -111,36 +142,77 @@ function Badge({ etapa }) {
   }, etapa);
 }
 
-function PantallaLogin({ onSelect }) {
+// ─── PANTALLA LOGIN ───────────────────────────────────────────────────────────
+function PantallaLogin({ onLogin }) {
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [cargando, setCargando] = useState(false);
+  const [error, setError] = useState("");
+  const [mostrarPassword, setMostrarPassword] = useState(false);
+
+  async function handleLogin() {
+    if (!email.trim() || !password.trim()) { setError("Ingresa tu email y contraseña."); return; }
+    setCargando(true); setError("");
+    try {
+      const usuario = await loginConRPC(email.trim().toLowerCase(), password);
+      onLogin(usuario);
+    } catch(e) {
+      setError("Email o contraseña incorrectos.");
+    }
+    setCargando(false);
+  }
+
   return (
     <div style={{ minHeight: "100vh", background: "#0f0f0f", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 32 }}>
       <div style={{ marginBottom: 48, textAlign: "center" }}>
-        <div style={{ fontSize: 11, letterSpacing: "0.25em", color: "#666", marginBottom: 12, textTransform: "uppercase" }}>Sistema de Cobranza</div>
+        <div style={{ fontSize: 11, letterSpacing: "0.25em", color: "#555", marginBottom: 12, textTransform: "uppercase" }}>Sistema de Cobranza</div>
         <h1 style={{ color: "#fff", fontSize: 38, fontWeight: 700, margin: 0, letterSpacing: "-0.02em" }}>Agente IA</h1>
         <div style={{ color: "#555", fontSize: 13, marginTop: 10 }}>{new Date().toLocaleDateString("es-CO", { weekday: "long", year: "numeric", month: "long", day: "numeric" })}</div>
       </div>
-      <div style={{ color: "#777", fontSize: 11, letterSpacing: "0.15em", textTransform: "uppercase", marginBottom: 20 }}>Selecciona tu etapa de mora</div>
-      <div style={{ display: "flex", flexDirection: "column", gap: 12, width: "100%", maxWidth: 380 }}>
-        {ETAPAS.map(etapa => {
-          const cfg = ETAPA_CONFIG[etapa];
-          const count = CLIENTES_MOCK.filter(c => c.etapa === etapa).length;
-          return (
-            <button key={etapa} onClick={() => onSelect(etapa)}
-              style={{ background: "#181818", border: `1px solid ${cfg.color}44`, borderLeft: `4px solid ${cfg.color}`, borderRadius: 10, padding: "18px 20px", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-              <div style={{ textAlign: "left" }}>
-                <div style={{ fontWeight: 700, fontSize: 16, color: cfg.color }}>{etapa}</div>
-                <div style={{ color: "#777", fontSize: 12, marginTop: 3 }}>{cfg.dias}</div>
-              </div>
-              <div style={{ color: "#666", fontSize: 13 }}><span style={{ color: cfg.color, fontWeight: 700, fontSize: 22 }}>{count}</span> clientes</div>
+
+      <div style={{ width: "100%", maxWidth: 380 }}>
+        <div style={{ marginBottom: 16 }}>
+          <div style={{ color: "#777", fontSize: 11, textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 8 }}>Email</div>
+          <input
+            type="email" value={email} onChange={e => setEmail(e.target.value)}
+            onKeyDown={e => e.key === "Enter" && handleLogin()}
+            placeholder="gestor@cobranza.co"
+            style={{ width: "100%", background: "#181818", border: "1px solid #2a2a2a", borderRadius: 10, padding: "14px 16px", color: "#fff", fontSize: 14 }}
+          />
+        </div>
+        <div style={{ marginBottom: 24 }}>
+          <div style={{ color: "#777", fontSize: 11, textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 8 }}>Contraseña</div>
+          <div style={{ position: "relative" }}>
+            <input
+              type={mostrarPassword ? "text" : "password"} value={password} onChange={e => setPassword(e.target.value)}
+              onKeyDown={e => e.key === "Enter" && handleLogin()}
+              placeholder="••••••••"
+              style={{ width: "100%", background: "#181818", border: "1px solid #2a2a2a", borderRadius: 10, padding: "14px 16px", color: "#fff", fontSize: 14 }}
+            />
+            <button onClick={() => setMostrarPassword(!mostrarPassword)}
+              style={{ position: "absolute", right: 14, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", color: "#555", cursor: "pointer", fontSize: 12 }}>
+              {mostrarPassword ? "ocultar" : "ver"}
             </button>
-          );
-        })}
+          </div>
+        </div>
+
+        {error && (
+          <div style={{ background: "#1c0a00", border: "1px solid #ef444444", borderRadius: 8, padding: "10px 14px", marginBottom: 16, color: "#f87171", fontSize: 13 }}>
+            {error}
+          </div>
+        )}
+
+        <button onClick={handleLogin} disabled={cargando}
+          style={{ width: "100%", background: cargando ? "#222" : "#fff", border: "none", borderRadius: 10, padding: 16, color: cargando ? "#555" : "#000", fontWeight: 700, fontSize: 15, cursor: cargando ? "not-allowed" : "pointer" }}>
+          {cargando ? "Verificando..." : "Ingresar"}
+        </button>
       </div>
     </div>
   );
 }
 
-function PantallaListado({ etapa, onSeleccionarCliente, gestiones, onVerRegistros, onCerrar }) {
+// ─── PANTALLA LISTADO ─────────────────────────────────────────────────────────
+function PantallaListado({ etapa, usuario, onSeleccionarCliente, gestiones, onVerRegistros, onCerrar }) {
   const clientes = CLIENTES_MOCK.filter(c => c.etapa === etapa);
   const cfg = ETAPA_CONFIG[etapa];
   const getEstado = id => { const gs = gestiones.filter(g => (g.clienteId || g.cliente_id) === id); return gs.length ? gs[0].resultado : null; };
@@ -155,7 +227,7 @@ function PantallaListado({ etapa, onSeleccionarCliente, gestiones, onVerRegistro
           <button onClick={onCerrar} style={{ background: "none", border: "none", color: "#777", cursor: "pointer", fontSize: 20 }}>←</button>
           <div>
             <div style={{ color: cfg.color, fontWeight: 700, fontSize: 20 }}>{etapa}</div>
-            <div style={{ color: "#666", fontSize: 12, marginTop: 2 }}>{cfg.dias}</div>
+            <div style={{ color: "#666", fontSize: 11, marginTop: 2 }}>{usuario.nombre} · {cfg.dias}</div>
           </div>
         </div>
         <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
@@ -208,7 +280,8 @@ function PantallaListado({ etapa, onSeleccionarCliente, gestiones, onVerRegistro
   );
 }
 
-function PantallaGestion({ cliente, etapa, gestiones, onGuardar, onVolver, onAbrirWhatsApp }) {
+// ─── PANTALLA GESTIÓN ─────────────────────────────────────────────────────────
+function PantallaGestion({ cliente, etapa, usuario, gestiones, onGuardar, onVolver, onAbrirWhatsApp }) {
   const [resultado, setResultado] = useState("");
   const [fecha, setFecha] = useState("");
   const [monto, setMonto] = useState("");
@@ -241,7 +314,7 @@ function PantallaGestion({ cliente, etapa, gestiones, onGuardar, onVolver, onAbr
     if (!resultado || guardado || !cum.permitido) return;
     setGuardando(true); setErrorGuardar("");
     try {
-      await onGuardar({ clienteId: cliente.id, clienteNombre: cliente.nombre, cedula: cliente.cedula, etapa, resultado, fechaCompromiso: fecha || null, montoCompromiso: monto || null, medioPago: medioPago || null, observaciones, cobrador: etapa });
+      await onGuardar({ clienteId: cliente.id, clienteNombre: cliente.nombre, cedula: cliente.cedula, etapa, resultado, fechaCompromiso: fecha || null, montoCompromiso: monto || null, medioPago: medioPago || null, observaciones, cobrador: usuario.nombre });
       setGuardado(true);
       setTimeout(() => onVolver(), 1200);
     } catch(e) { setErrorGuardar("Error al guardar. Intenta de nuevo."); }
@@ -322,13 +395,14 @@ function PantallaGestion({ cliente, etapa, gestiones, onGuardar, onVolver, onAbr
         {errorGuardar && <div style={{ color: "#f87171", fontSize: 12, marginBottom: 10, textAlign: "center" }}>{errorGuardar}</div>}
         <button onClick={handleGuardar} disabled={!resultado || guardado || !cum.permitido || guardando}
           style={{ width: "100%", background: guardado ? "#22c55e" : (resultado && cum.permitido) ? cfg.color : "#222", border: "none", borderRadius: 12, padding: 16, color: (resultado && cum.permitido) ? "#000" : "#555", fontWeight: 700, fontSize: 15, cursor: (resultado && cum.permitido && !guardando) ? "pointer" : "not-allowed" }}>
-          {guardado ? "✓ Guardado en Supabase" : guardando ? "Guardando..." : !cum.permitido ? "🔒 Bloqueado — Ley 2300" : "Registrar gestión"}
+          {guardado ? "✓ Guardado" : guardando ? "Guardando..." : !cum.permitido ? "🔒 Bloqueado — Ley 2300" : "Registrar gestión"}
         </button>
       </div>
     </div>
   );
 }
 
+// ─── PANTALLA WHATSAPP ────────────────────────────────────────────────────────
 function PantallaWhatsApp({ cliente, etapa, gestiones, onVolver }) {
   const cfg = ETAPA_CONFIG[etapa];
   const [mensajes, setMensajes] = useState([{ rol: "sistema", texto: `Conversación con ${cliente.nombre} iniciada.`, hora: new Date().toLocaleTimeString("es-CO", { hour: "2-digit", minute: "2-digit" }) }]);
@@ -402,7 +476,7 @@ function PantallaWhatsApp({ cliente, etapa, gestiones, onVolver }) {
         )}
       </div>
       <div style={{ borderTop: "1px solid #222", padding: "14px 24px", background: "#111" }}>
-        <div style={{ color: "#555", fontSize: 10, marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.08em" }}>Simular mensaje del cliente</div>
+        <div style={{ color: "#555", fontSize: 10, marginBottom: 8, textTransform: "uppercase" }}>Simular mensaje del cliente</div>
         <div style={{ display: "flex", gap: 8 }}>
           <input value={inputCliente} onChange={e => setInputCliente(e.target.value)} onKeyDown={e => e.key === "Enter" && agregarCliente()} placeholder="Lo que dice el cliente..."
             style={{ flex: 1, background: "#181818", border: "1px solid #2a2a2a", borderRadius: 10, padding: "10px 14px", color: "#ccc", fontSize: 13 }} />
@@ -410,7 +484,7 @@ function PantallaWhatsApp({ cliente, etapa, gestiones, onVolver }) {
         </div>
       </div>
       <div style={{ borderTop: "1px solid #1e1e1e", padding: "14px 24px 24px", background: "#0f0f0f" }}>
-        <div style={{ color: "#555", fontSize: 10, marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.08em" }}>Tu respuesta</div>
+        <div style={{ color: "#555", fontSize: 10, marginBottom: 8, textTransform: "uppercase" }}>Tu respuesta</div>
         <div style={{ display: "flex", gap: 8 }}>
           <textarea value={inputCobrador} onChange={e => setInputCobrador(e.target.value)} rows={2} placeholder="Edita o escribe tu respuesta..."
             style={{ flex: 1, background: "#181818", border: `1px solid ${cfg.color}44`, borderRadius: 10, padding: "10px 14px", color: "#e0e0e0", fontSize: 13, resize: "none" }} />
@@ -422,6 +496,7 @@ function PantallaWhatsApp({ cliente, etapa, gestiones, onVolver }) {
   );
 }
 
+// ─── PANTALLA REGISTROS ───────────────────────────────────────────────────────
 function PantallaRegistros({ gestiones, cargando, onVolver }) {
   return (
     <div style={{ minHeight: "100vh", background: "#0f0f0f" }}>
@@ -432,7 +507,7 @@ function PantallaRegistros({ gestiones, cargando, onVolver }) {
       </div>
       <div style={{ padding: "24px", maxWidth: 800, margin: "0 auto" }}>
         {cargando ? (
-          <div style={{ color: "#555", textAlign: "center", marginTop: 80, fontSize: 14 }}>Cargando desde Supabase...</div>
+          <div style={{ color: "#555", textAlign: "center", marginTop: 80, fontSize: 14 }}>Cargando...</div>
         ) : gestiones.length === 0 ? (
           <div style={{ color: "#444", textAlign: "center", marginTop: 80, fontSize: 14 }}>No hay gestiones registradas aún</div>
         ) : (
@@ -462,14 +537,15 @@ function PantallaRegistros({ gestiones, cargando, onVolver }) {
   );
 }
 
+// ─── APP PRINCIPAL ────────────────────────────────────────────────────────────
 function App() {
   const [pantalla, setPantalla] = useState("login");
-  const [etapaActiva, setEtapaActiva] = useState(null);
+  const [usuario, setUsuario] = useState(null);
   const [clienteActivo, setClienteActivo] = useState(null);
   const [gestiones, setGestiones] = useState([]);
   const [cargandoGestiones, setCargandoGestiones] = useState(false);
 
-  useEffect(() => { fetchGestiones(); }, []);
+  useEffect(() => { if (usuario) fetchGestiones(); }, [usuario]);
 
   async function fetchGestiones() {
     setCargandoGestiones(true);
@@ -482,11 +558,22 @@ function App() {
     await fetchGestiones();
   }
 
-  if (pantalla === "login") return <PantallaLogin onSelect={e => { setEtapaActiva(e); setPantalla("listado"); }} />;
+  function handleLogin(usr) {
+    setUsuario(usr);
+    setPantalla("listado");
+  }
+
+  function handleCerrarSesion() {
+    setUsuario(null);
+    setGestiones([]);
+    setPantalla("login");
+  }
+
+  if (pantalla === "login") return <PantallaLogin onLogin={handleLogin} />;
   if (pantalla === "registros") return <PantallaRegistros gestiones={gestiones} cargando={cargandoGestiones} onVolver={() => setPantalla("listado")} />;
-  if (pantalla === "whatsapp" && clienteActivo) return <PantallaWhatsApp cliente={clienteActivo} etapa={etapaActiva} gestiones={gestiones} onVolver={() => setPantalla("gestion")} />;
-  if (pantalla === "gestion" && clienteActivo) return <PantallaGestion cliente={clienteActivo} etapa={etapaActiva} gestiones={gestiones} onGuardar={handleGuardarGestion} onVolver={() => setPantalla("listado")} onAbrirWhatsApp={() => setPantalla("whatsapp")} />;
-  return <PantallaListado etapa={etapaActiva} gestiones={gestiones} onSeleccionarCliente={c => { setClienteActivo(c); setPantalla("gestion"); }} onVerRegistros={() => setPantalla("registros")} onCerrar={() => setPantalla("login")} />;
+  if (pantalla === "whatsapp" && clienteActivo) return <PantallaWhatsApp cliente={clienteActivo} etapa={usuario.etapa} gestiones={gestiones} onVolver={() => setPantalla("gestion")} />;
+  if (pantalla === "gestion" && clienteActivo) return <PantallaGestion cliente={clienteActivo} etapa={usuario.etapa} usuario={usuario} gestiones={gestiones} onGuardar={handleGuardarGestion} onVolver={() => setPantalla("listado")} onAbrirWhatsApp={() => setPantalla("whatsapp")} />;
+  return <PantallaListado etapa={usuario.etapa} usuario={usuario} gestiones={gestiones} onSeleccionarCliente={c => { setClienteActivo(c); setPantalla("gestion"); }} onVerRegistros={() => setPantalla("registros")} onCerrar={handleCerrarSesion} />;
 }
 
 ReactDOM.createRoot(document.getElementById("root")).render(<App />);
