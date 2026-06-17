@@ -414,8 +414,8 @@ function PantallaGestion({ cliente, etapa, usuario, gestiones, onGuardar, onVolv
   async function pedirIA() {
     setCargandoIA(true); setSugerenciaIA("");
     try {
-      const res = await fetch("https://api.anthropic.com/v1/messages", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ model: "claude-sonnet-4-20250514", max_tokens: 1000, system: "Eres asistente de cobranza colombiano. Responde en español natural, máximo 4 oraciones, sin bullets.", messages: [{ role: "user", content: `Cliente: ${cliente.nombre}\nDeuda: ${formatPeso(cliente.saldo)}\nDías mora: ${cliente.diasMora}\nEtapa: ${etapa}\nResultado: ${resultado || "sin gestión"}\n\nDame sugerencia corta.` }] }) });
-      const d = await res.json(); setSugerenciaIA(d.content?.find(b => b.type === "text")?.text || "Sin respuesta.");
+      const res = await fetch("/api/sugerencia", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ system: "Eres asistente de cobranza colombiano. Responde en español natural, máximo 4 oraciones, sin bullets.", messages: [{ role: "user", content: `Cliente: ${cliente.nombre}\nDeuda: ${formatPeso(cliente.saldo)}\nDías mora: ${cliente.diasMora}\nEtapa: ${etapa}\nResultado: ${resultado || "sin gestión"}\n\nDame sugerencia corta.` }] }) });
+      const d = await res.json(); setSugerenciaIA(d.text || "Sin respuesta.");
     } catch { setSugerenciaIA("No se pudo conectar."); }
     setCargandoIA(false);
   }
@@ -482,8 +482,8 @@ function PantallaWhatsApp({ cliente, etapa, gestiones, onVolver }) {
     setCargando(true); setSugerencia("");
     try {
       const hiloTxt = hilo.filter(m => m.rol !== "sistema").map(m => `${m.rol === "cliente" ? cliente.nombre : "Cobrador"}: ${m.texto}`).join("\n");
-      const res = await fetch("https://api.anthropic.com/v1/messages", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ model: "claude-sonnet-4-20250514", max_tokens: 1000, system: "Eres asistente de cobranza colombiano. Sugiere el mejor mensaje WhatsApp. Empático pero firme. Nunca amenaces (Ley 2300). Máximo 3 oraciones. Responde SOLO con el texto sugerido.", messages: [{ role: "user", content: `Cliente: ${cliente.nombre}\nDeuda: ${formatPeso(cliente.saldo)} · ${cliente.diasMora} días\n\nHilo:\n${hiloTxt}\n\nÚltimo mensaje: "${msg}"\n\nSugiere respuesta.` }] }) });
-      const d = await res.json(); const txt = d.content?.find(b => b.type === "text")?.text || ""; setSugerencia(txt); setInputCobrador(txt);
+      const res = await fetch("/api/sugerencia", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ system: "Eres asistente de cobranza colombiano. Sugiere el mejor mensaje WhatsApp. Empático pero firme. Nunca amenaces (Ley 2300). Máximo 3 oraciones. Responde SOLO con el texto sugerido.", messages: [{ role: "user", content: `Cliente: ${cliente.nombre}\nDeuda: ${formatPeso(cliente.saldo)} · ${cliente.diasMora} días\n\nHilo:\n${hiloTxt}\n\nÚltimo mensaje: "${msg}"\n\nSugiere respuesta.` }] }) });
+      const d = await res.json(); const txt = d.text || ""; setSugerencia(txt); setInputCobrador(txt);
     } catch { setSugerencia("No se pudo generar sugerencia."); }
     setCargando(false);
   }
